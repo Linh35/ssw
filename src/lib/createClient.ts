@@ -1,4 +1,4 @@
-import { signal, type ReadonlySignal, type Signal } from '@preact/signals-core'
+import type { ReadonlySignal, Signal } from '@preact/signals-core'
 import type { CallOp, ClientMessage, KeyState, SetOp, WorkerMessage } from './protocol'
 import {
   ctx,
@@ -147,7 +147,7 @@ export function createClient(workerUrl: URL | string, name = 'ssw') {
     const shape = def.setup(ctx)
     for (const [key, val] of Object.entries(shape)) {
       if (isStateSignal(val)) {
-        const sig = signal((val as Signal).peek())
+        const sig = val as Signal
         mirror.signals.set(key, sig)
         mirror.rawSignals[key] = sig
         Object.defineProperty(store, key, {
