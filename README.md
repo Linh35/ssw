@@ -87,7 +87,22 @@ Connects to a `SharedWorker` at `workerUrl`. Returns `{ useStore }`. The `name` 
 
 ### `useStore(def)` (returned from `createClient` / `clientFromPort`)
 
-Returns a plain object whose accessors are wired via `Object.defineProperty` to the local signal mirror. `await store.ready` resolves once the initial snapshot has been applied. `useStore` can only be called once per store id per client; call it once and pass the resulting object around.
+Returns a plain object whose accessors are wired via `Object.defineProperty` to the local signal mirror. State keys are accessed as plain properties (with synchronous getters/setters), actions are methods, computed values are read-only properties.
+
+`useStore` can only be called once per store id per client; call it once and pass the resulting object around.
+
+#### `store.ready`
+
+A `Promise<void>` that resolves once the initial snapshot has been applied. It **rejects** if the worker doesn't recognise the store id — `await store.ready` is the right place to put error handling, e.g.:
+
+```ts
+const store = useStore(counterStore)
+try {
+  await store.ready
+} catch (err) {
+  // worker didn't know this store id, or the connection failed early
+}
+```
 
 ### `$ (store)`
 
@@ -100,6 +115,23 @@ Call once inside the SharedWorker entry. Instantiates each store and binds `Shar
 ### `clientFromPort(port)` / `bindHost(defs)` (low-level)
 
 Port-level entry points used by the test suite. They take any `MessagePort` (e.g. `new MessageChannel().port1`) and let you run the host/client without a real `SharedWorker` — handy for tests and for adapting to other transports.
+
+```ts
+// inside a test
+import { bindHost, clientFromPort, defineStore } from '../src/lib'
+
+const def = defineStore('x', ({ signal }) => ({ n: signal(0) }))
+const onConnect = bindHost([def])
+
+const ch = new MessageChannel()
+onConnect(ch.port2)                       // wire the host to one end
+const { useStore } = clientFromPort(ch.port1)
+const store = useStore(def)
+await store.ready
+store.n = 7
+```
+
+Vitest tests in this repo run end-to-end against `MessageChannel`s constructed this way — no jsdom or SharedWorker shim required.
 
 ### `effect`, `batch` (re-exports from `@preact/signals-core`)
 
