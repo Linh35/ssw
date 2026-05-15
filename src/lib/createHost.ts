@@ -13,6 +13,7 @@ interface StoreRuntime {
   actions: Record<string, (...args: unknown[]) => unknown>
   actionNames: string[]
   meta: Record<string, KeyMeta>
+  subscribers: Set<MessagePort>
 }
 
 function instantiate(def: StoreDefinition<Record<string, unknown>>): StoreRuntime {
@@ -34,13 +35,33 @@ function instantiate(def: StoreDefinition<Record<string, unknown>>): StoreRuntim
     actions,
     actionNames: Object.keys(actions),
     meta,
+    subscribers: new Set(),
   }
 }
 
-let activeSet: {
-  clientId: string
-  storeKeys: Map<string, Set<string>>
-} | null = null
+function registerEffect(storeId: string, store: StoreRuntime) {
+  const lastValues: Record<string, unknown> = {}
+  let first = true
+  effect(() => {
+    if (first) {
+      for (const k of store.signalKeys) lastValues[k] = store.signals[k]!.value
+      first = false
+      return
+    }
+    const changed: Record<string, KeyState> = {}
+    let any = false
+    for (const k of store.signalKeys) {
+      const v = store.signals[k]!.value
+      if (v === lastValues[k]) continue
+      changed[k] = { value: v, ...store.meta[k]! }
+      lastValues[k] = v
+      any = true
+    }
+    if (!any) return
+    const patch: WorkerMessage = { type: 'patch', storeId, state: changed }
+    for (const port of store.subscribers) port.postMessage(patch)
+  })
+}
 
 declare const self: SharedWorkerGlobalScope
 
@@ -65,16 +86,17 @@ export function createHost(defs: StoreDefinition<Record<string, unknown>>[]) {
  */
 export function bindHost(defs: StoreDefinition<Record<string, unknown>>[]) {
   const stores = new Map<string, StoreRuntime>()
-  for (const def of defs) stores.set(def.id, instantiate(def))
+  for (const def of defs) {
+    const runtime = instantiate(def)
+    stores.set(def.id, runtime)
+    registerEffect(def.id, runtime)
+  }
 
   return function onConnect(port: MessagePort) {
-    let portClientId: string | null = null
-
     port.addEventListener('message', (ev) => {
       const msg = ev.data as ClientMessage
 
       if (msg.type === 'subscribe') {
-        portClientId = msg.clientId
         const store = stores.get(msg.storeId)
         if (!store) {
           port.postMessage({
@@ -84,38 +106,44 @@ export function bindHost(defs: StoreDefinition<Record<string, unknown>>[]) {
           } satisfies WorkerMessage)
           return
         }
-        subscribePort(port, msg.storeId, store, () => portClientId)
+        const state: Record<string, KeyState> = {}
+        for (const k of store.signalKeys) {
+          state[k] = { value: store.signals[k]!.peek(), ...store.meta[k]! }
+        }
+        port.postMessage({
+          type: 'snapshot',
+          storeId: msg.storeId,
+          state,
+          actions: store.actionNames,
+        } satisfies WorkerMessage)
+        store.subscribers.add(port)
         return
       }
 
       if (msg.type === 'ops') {
-        const setKeysByStore = new Map<string, Set<string>>()
-        for (const op of msg.ops) {
-          if (op.kind === 'set') {
-            let s = setKeysByStore.get(op.storeId)
-            if (!s) {
-              s = new Set()
-              setKeysByStore.set(op.storeId, s)
+        const idempotentAcks: Record<string, Record<string, number>> = {}
+        batch(() => {
+          for (const op of msg.ops) {
+            if (op.kind !== 'set') continue
+            const store = stores.get(op.storeId)
+            if (!store) continue
+            const sig = store.signals[op.key]
+            if (!sig) continue
+            const willChange = sig.peek() !== op.value
+            store.meta[op.key] = { originClientId: msg.clientId, originSeq: op.seq }
+            sig.value = op.value
+            if (!willChange) {
+              let s = idempotentAcks[op.storeId]
+              if (!s) {
+                s = {}
+                idempotentAcks[op.storeId] = s
+              }
+              s[op.key] = op.seq
             }
-            s.add(op.key)
           }
-        }
-
-        activeSet = { clientId: msg.clientId, storeKeys: setKeysByStore }
-        try {
-          batch(() => {
-            for (const op of msg.ops) {
-              if (op.kind !== 'set') continue
-              const store = stores.get(op.storeId)
-              if (!store) continue
-              const sig = store.signals[op.key]
-              if (!sig) continue
-              store.meta[op.key] = { originClientId: msg.clientId, originSeq: op.seq }
-              sig.value = op.value
-            }
-          })
-        } finally {
-          activeSet = null
+        })
+        for (const [storeId, seqs] of Object.entries(idempotentAcks)) {
+          port.postMessage({ type: 'ack', storeId, seqs } satisfies WorkerMessage)
         }
 
         for (const op of msg.ops) {
@@ -125,55 +153,6 @@ export function bindHost(defs: StoreDefinition<Record<string, unknown>>[]) {
     })
     port.start()
   }
-}
-
-function subscribePort(
-  port: MessagePort,
-  storeId: string,
-  store: StoreRuntime,
-  getClientId: () => string | null,
-) {
-  const lastSent: Record<string, unknown> = {}
-  let first = true
-
-  effect(() => {
-    if (first) {
-      const state: Record<string, KeyState> = {}
-      for (const k of store.signalKeys) {
-        const v = store.signals[k]!.value
-        state[k] = { value: v, ...store.meta[k]! }
-        lastSent[k] = v
-      }
-      port.postMessage({
-        type: 'snapshot',
-        storeId,
-        state,
-        actions: store.actionNames,
-      } satisfies WorkerMessage)
-      first = false
-      return
-    }
-
-    const portClientId = getClientId()
-    const forceKeys =
-      activeSet && portClientId === activeSet.clientId
-        ? activeSet.storeKeys.get(storeId)
-        : undefined
-
-    const changed: Record<string, KeyState> = {}
-    let any = false
-    for (const k of store.signalKeys) {
-      const v = store.signals[k]!.value
-      const forced = forceKeys?.has(k) ?? false
-      if (v === lastSent[k] && !forced) continue
-      changed[k] = { value: v, ...store.meta[k]! }
-      lastSent[k] = v
-      any = true
-    }
-    if (any) {
-      port.postMessage({ type: 'patch', storeId, state: changed } satisfies WorkerMessage)
-    }
-  })
 }
 
 function handleCall(
@@ -208,10 +187,21 @@ function handleCall(
     .then(() => fn(...op.args))
     .then(
       (value) => {
+        const seqs: Record<string, number> = {}
+        let any = false
         for (const k of store.signalKeys) {
           if (store.signals[k]!.peek() !== before[k]) {
             store.meta[k] = { originClientId: clientId, originSeq: op.seq }
+            seqs[k] = op.seq
+            any = true
           }
+        }
+        if (any) {
+          port.postMessage({
+            type: 'ack',
+            storeId: op.storeId,
+            seqs,
+          } satisfies WorkerMessage)
         }
         port.postMessage({
           type: 'result',

@@ -144,6 +144,35 @@ describe('regressions', () => {
 
     expect(a.count).toBe(b.count)
   })
+
+  it('ack channel: idempotent set still releases the seq filter', async () => {
+    const { newTab } = setup()
+    const a = newTab()
+    const b = newTab()
+    await Promise.all([a.ready, b.ready])
+
+    a.count = 0
+    await settle()
+
+    b.count = 7
+    await settle()
+    expect(a.count).toBe(7)
+  })
+
+  it('ack channel: action-induced changes release the seq filter', async () => {
+    const { newTab } = setup()
+    const a = newTab()
+    const b = newTab()
+    await Promise.all([a.ready, b.ready])
+
+    a.bump(2)
+    await settle()
+    expect(a.count).toBe(2)
+
+    b.count = 10
+    await settle()
+    expect(a.count).toBe(10)
+  })
 })
 
 describe('error and lifecycle', () => {

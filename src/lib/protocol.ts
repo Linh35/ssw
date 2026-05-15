@@ -35,6 +35,7 @@ export type WorkerMessage =
       actions: string[]
     }
   | { type: 'patch'; storeId: string; state: Record<string, KeyState> }
+  | { type: 'ack'; storeId: string; seqs: Record<string, number> }
   | { type: 'result'; callId: number; ok: true; value: unknown }
   | { type: 'result'; callId: number; ok: false; error: string }
   | { type: 'error'; storeId?: string; message: string }

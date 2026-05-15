@@ -153,6 +153,13 @@ export function clientFromPort(port: MessagePort) {
       pending.delete(msg.callId)
       if (msg.ok) p.resolve(msg.value)
       else p.reject(new Error(msg.error))
+    } else if (msg.type === 'ack') {
+      const m = mirrors.get(msg.storeId)
+      if (!m) return
+      for (const [k, seq] of Object.entries(msg.seqs)) {
+        const prev = m.ackedSeq.get(k) ?? 0
+        if (seq > prev) m.ackedSeq.set(k, seq)
+      }
     } else if (msg.type === 'error') {
       console.error('[ssw]', msg.message)
       if (msg.storeId) {
