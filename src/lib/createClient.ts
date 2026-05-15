@@ -38,6 +38,7 @@ interface MirrorRuntime {
   ready: Promise<void>
   resolveReady: () => void
   latestLocalSeq: Map<string, number>
+  ackedSeq: Map<string, number>
 }
 
 export function createClient(workerUrl: URL | string, name = 'ssw') {
@@ -98,9 +99,14 @@ export function createClient(workerUrl: URL | string, name = 'ssw') {
   function applyKeyState(mirror: MirrorRuntime, key: string, state: KeyState) {
     const sig = mirror.signals.get(key)
     if (!sig) return
-    if (state.originClientId === clientId && state.originSeq != null) {
-      const localMax = mirror.latestLocalSeq.get(key) ?? 0
-      if (state.originSeq < localMax) return
+    const localMax = mirror.latestLocalSeq.get(key) ?? 0
+    const stateSeq = state.originSeq ?? 0
+    if (state.originClientId === clientId) {
+      if (stateSeq < localMax) return
+      const prevAck = mirror.ackedSeq.get(key) ?? 0
+      if (stateSeq > prevAck) mirror.ackedSeq.set(key, stateSeq)
+    } else if ((mirror.ackedSeq.get(key) ?? 0) < localMax) {
+      return
     }
     if (sig.peek() !== state.value) sig.value = state.value
   }
@@ -137,6 +143,7 @@ export function createClient(workerUrl: URL | string, name = 'ssw') {
       ready,
       resolveReady,
       latestLocalSeq: new Map(),
+      ackedSeq: new Map(),
     }
     mirrors.set(def.id, mirror)
 

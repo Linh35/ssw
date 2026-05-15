@@ -138,7 +138,7 @@ function subscribePort(
     }
 
     const portClientId = getClientId()
-    const suppress =
+    const forceKeys =
       activeSet && portClientId === activeSet.clientId
         ? activeSet.storeKeys.get(storeId)
         : undefined
@@ -147,11 +147,8 @@ function subscribePort(
     let any = false
     for (const k of store.signalKeys) {
       const v = store.signals[k]!.value
-      if (v === lastSent[k]) continue
-      if (suppress && suppress.has(k)) {
-        lastSent[k] = v
-        continue
-      }
+      const forced = forceKeys?.has(k) ?? false
+      if (v === lastSent[k] && !forced) continue
       changed[k] = { value: v, ...store.meta[k]! }
       lastSent[k] = v
       any = true
