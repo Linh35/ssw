@@ -43,7 +43,10 @@ interface MirrorRuntime {
 
 export function createClient(workerUrl: URL | string, name = 'ssw') {
   const worker = new SharedWorker(workerUrl, { type: 'module', name })
-  const port = worker.port
+  return clientFromPort(worker.port)
+}
+
+export function clientFromPort(port: MessagePort) {
   const clientId =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()

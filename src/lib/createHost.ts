@@ -45,12 +45,18 @@ let activeSet: {
 declare const self: SharedWorkerGlobalScope
 
 export function createHost(defs: StoreDefinition<Record<string, unknown>>[]) {
+  const onConnect = bindHost(defs)
+  self.addEventListener('connect', (event) => {
+    const port = (event as MessageEvent).ports[0]
+    if (port) onConnect(port)
+  })
+}
+
+export function bindHost(defs: StoreDefinition<Record<string, unknown>>[]) {
   const stores = new Map<string, StoreRuntime>()
   for (const def of defs) stores.set(def.id, instantiate(def))
 
-  self.addEventListener('connect', (event) => {
-    const port = (event as MessageEvent).ports[0]
-    if (!port) return
+  return function onConnect(port: MessagePort) {
     let portClientId: string | null = null
 
     port.addEventListener('message', (ev) => {
@@ -107,7 +113,7 @@ export function createHost(defs: StoreDefinition<Record<string, unknown>>[]) {
       }
     })
     port.start()
-  })
+  }
 }
 
 function subscribePort(

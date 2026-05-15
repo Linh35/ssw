@@ -1,4 +1,4 @@
 export { defineStore } from './defineStore'
-export { createClient, $, type Store } from './createClient'
-export { createHost } from './createHost'
+export { createClient, clientFromPort, $, type Store } from './createClient'
+export { createHost, bindHost } from './createHost'
 export { effect, batch } from '@preact/signals-core'
