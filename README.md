@@ -165,10 +165,13 @@ Re-exported so you don't have to depend on the underlying lib separately.
 
 The whole queue ships in one `{type:'ops'}` message at the next microtask. Multiple writes to the same key inside that microtask collapse to the last value, so a slider drag becomes a single message.
 
-**Two ack channels.** When the worker processes a set, the originating tab needs to know its `seq` has been acknowledged so that later remote writes are no longer suspect.
+**One effect per store, broadcast to subscribers.** The worker registers a single `effect()` per store at instantiation time, not one per connected port. When any signal changes, that effect runs the diff against `lastValues` once and `postMessage`s the patch to every entry in the store's `subscribers: Set<MessagePort>`. With 100 tabs subscribed, that's one effect fire and one diff loop per write, not 100.
 
-- For **value-changed sets**, the resulting patch is broadcast to everyone including the originator, carrying `originClientId` and `originSeq`. The originator advances `ackedSeq` from the patch metadata.
-- For **idempotent sets** (value didn't actually change), the per-port effect doesn't fire. The worker's per-port effect *force-includes* those keys in the next patch to the originator so the ack still flows through. This is the only role of the `activeSet` context inside `bindHost`.
+**Two ack channels.** When the worker processes an op, the originating tab needs to know its `seq` has been acknowledged so that later remote writes are no longer skipped by the optimistic filter.
+
+- **Value-changed sets** ack through the patch itself. The broadcast carries `originClientId` and `originSeq`; the originator advances `ackedSeq` directly from the patch metadata.
+- **Idempotent sets** (value already matched) don't trigger the effect, so the worker sends an explicit `{type: 'ack', storeId, seqs: {key: seq}}` to the originating port after the ops batch is applied.
+- **Completed actions** that mutated state send the same explicit `ack` once the action body resolves, with the action's `seq` covering every key the diff shows changed. The intermediate patches that go out *during* the action body have stale meta — they're emitted to other subscribers (which apply them normally) but skipped by the originator's `ackedSeq` filter until the post-action ack arrives.
 
 **Per-key flicker filter.** On the client, every applied patch is checked against two counters per key:
 
