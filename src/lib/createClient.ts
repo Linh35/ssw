@@ -49,6 +49,8 @@ interface MirrorRuntime {
   rawSignals: Record<string, Signal | ReadonlySignal>
   ready: Promise<void>
   resolveReady: () => void
+  rejectReady: (err: unknown) => void
+  readySettled: boolean
   latestLocalSeq: Map<string, number>
   ackedSeq: Map<string, number>
 }
@@ -153,6 +155,10 @@ export function clientFromPort(port: MessagePort) {
       else p.reject(new Error(msg.error))
     } else if (msg.type === 'error') {
       console.error('[ssw]', msg.message)
+      if (msg.storeId) {
+        const m = mirrors.get(msg.storeId)
+        if (m) m.rejectReady(new Error(msg.message))
+      }
     }
   })
   port.start()
@@ -163,12 +169,27 @@ export function clientFromPort(port: MessagePort) {
     }
 
     let resolveReady!: () => void
-    const ready = new Promise<void>((r) => (resolveReady = r))
+    let rejectReady!: (err: unknown) => void
+    const ready = new Promise<void>((res, rej) => {
+      resolveReady = res
+      rejectReady = rej
+    })
+    ready.catch(() => {})
     const mirror: MirrorRuntime = {
       signals: new Map(),
       rawSignals: Object.create(null),
       ready,
-      resolveReady,
+      resolveReady: () => {
+        if (mirror.readySettled) return
+        mirror.readySettled = true
+        resolveReady()
+      },
+      rejectReady: (err) => {
+        if (mirror.readySettled) return
+        mirror.readySettled = true
+        rejectReady(err)
+      },
+      readySettled: false,
       latestLocalSeq: new Map(),
       ackedSeq: new Map(),
     }
