@@ -1,0 +1,19 @@
+{
+  "name": "ssw",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@preact/signals-core": "1.14.2"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3",
+    "vite": "5.4.10"
+  }
+}
