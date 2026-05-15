@@ -14,6 +14,13 @@ type ActionResult<F> = F extends (...args: infer A) => infer R
   ? (...args: A) => R extends Promise<unknown> ? R : void
   : never
 
+/**
+ * Mirror type for the consumer-facing store object. Each writable signal
+ * unwraps to its value (synchronous getter/setter), each computed unwraps
+ * to its value (read-only), each function maps to either `() => void`
+ * (sync actions, optimistic) or its original `Promise` return type
+ * (async actions).
+ */
 export type Store<S> = {
   [K in keyof S]: S[K] extends Signal<infer T>
     ? T
@@ -26,6 +33,11 @@ export type Store<S> = {
   readonly ready: Promise<void>
 }
 
+/**
+ * Escape hatch: returns the underlying `Signal` / `ReadonlySignal`
+ * instances behind the store. Use when you need to pass a raw signal to
+ * another reactive system or call `.peek()` / `.subscribe()` directly.
+ */
 export function $<S extends Record<string, unknown>>(
   store: Store<S>,
 ): { [K in keyof S]: S[K] extends Signal<infer T> ? Signal<T> : S[K] } {
@@ -41,11 +53,23 @@ interface MirrorRuntime {
   ackedSeq: Map<string, number>
 }
 
+/**
+ * Connect to a `SharedWorker` at `workerUrl`. Returns `{ useStore }`,
+ * where `useStore(def)` materialises the store on the main thread.
+ *
+ * `name` segregates SharedWorker instances on the same origin — pass a
+ * unique name if you want disjoint state graphs.
+ */
 export function createClient(workerUrl: URL | string, name = 'ssw') {
   const worker = new SharedWorker(workerUrl, { type: 'module', name })
   return clientFromPort(worker.port)
 }
 
+/**
+ * Lower-level entry: same surface as `createClient` but takes a
+ * `MessagePort` directly. Useful for testing (pair with a `MessageChannel`)
+ * and for adapting to non-`SharedWorker` transports.
+ */
 export function clientFromPort(port: MessagePort) {
   const clientId =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
