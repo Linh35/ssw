@@ -65,11 +65,7 @@ function registerEffect(storeId: string, store: StoreRuntime) {
 
 declare const self: SharedWorkerGlobalScope
 
-/**
- * Call once from the SharedWorker entry. Instantiates each store
- * definition (so `setup` runs in the worker context) and wires
- * `SharedWorkerGlobalScope.connect` to accept incoming tabs.
- */
+/** Call from the SharedWorker entry. Registers stores and accepts incoming tabs. */
 export function createHost(defs: StoreDefinition<Record<string, unknown>>[]) {
   const onConnect = bindHost(defs)
   self.addEventListener('connect', (event) => {
@@ -78,12 +74,7 @@ export function createHost(defs: StoreDefinition<Record<string, unknown>>[]) {
   })
 }
 
-/**
- * Lower-level entry: returns the per-port handler that `createHost` would
- * have attached to the `connect` event. Call the returned function with
- * any `MessagePort` to register a client. Useful for tests that pair the
- * host and client via `new MessageChannel()`.
- */
+/** Port-level entry — returns onConnect(port) for direct MessagePort wiring. */
 export function bindHost(defs: StoreDefinition<Record<string, unknown>>[]) {
   const stores = new Map<string, StoreRuntime>()
   for (const def of defs) {

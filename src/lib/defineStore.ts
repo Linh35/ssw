@@ -41,16 +41,7 @@ export interface StoreDefinition<S extends Record<string, unknown>> {
   setup: (ctx: StoreContext) => S
 }
 
-/**
- * Declare a store. The `setup` callback runs once in the worker (canonical
- * state) and once in each main-thread client (mirror seed + shape probe),
- * so it must be deterministic — no `Math.random`, `Date.now`, or `fetch`
- * during setup.
- *
- * Returned values are interpreted by shape: `signal()` → writable state,
- * `computed()` → derived state, plain `function` → optimistic action,
- * `async function` → round-trip action.
- */
+/** Declare a store. `setup` runs in both contexts — keep it deterministic. */
 export function defineStore<S extends Record<string, unknown>>(
   id: string,
   setup: (ctx: StoreContext) => S,
