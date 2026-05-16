@@ -171,7 +171,10 @@ The whole queue ships in one `{type:'ops'}` message at the next microtask. Multi
 
 - **Value-changed sets** ack through the patch itself. The broadcast carries `originClientId` and `originSeq`; the originator advances `ackedSeq` directly from the patch metadata.
 - **Idempotent sets** (value already matched) don't trigger the effect, so the worker sends an explicit `{type: 'ack', storeId, seqs: {key: seq}}` to the originating port after the ops batch is applied.
-- **Completed actions** that mutated state send the same explicit `ack` once the action body resolves, with the action's `seq` covering every key the diff shows changed. The intermediate patches that go out *during* the action body have stale meta — they're emitted to other subscribers (which apply them normally) but skipped by the originator's `ackedSeq` filter until the post-action ack arrives.
+- **Sync actions** run inside `batch()` on the worker so their writes coalesce into a single effect fire and a single patch. Before the batch, the worker installs *speculative* meta `{clientId, seq}` for every signal key in the store, and restores the meta for any key the action didn't actually change once the batch closes. The emitted patch carries the correct origin/seq, so the originator's `ackedSeq` advances directly from the patch metadata — no separate `ack` message needed.
+- **Async actions** can't be wrapped in a batch (each `await` would unbatch). Their body's writes fire effects immediately and broadcast intermediate patches with whatever meta was there *before* the action ran (typically stale). Other subscribers apply those intermediates normally; the originator skips them via the `ackedSeq` filter. Once the action resolves, the worker sends an explicit `ack` with the action's seq for every key the diff shows changed, releasing the originator's filter.
+
+**Patch application is batched on the client too.** When a multi-key patch arrives, the client wraps the per-key `applyKeyState` loop in `batch()` so consumer `effect()`s see all keys update at once and fire exactly once per patch — important for UI code that reads multiple store properties in the same reactive callback.
 
 **Per-key flicker filter.** On the client, every applied patch is checked against two counters per key:
 
