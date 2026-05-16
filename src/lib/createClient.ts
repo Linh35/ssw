@@ -1,5 +1,5 @@
 import { batch, type ReadonlySignal, type Signal } from '@preact/signals-core'
-import type { CallOp, ClientMessage, KeyState, SetOp, WorkerMessage } from './protocol'
+import type { ClientMessage, KeyState, WorkerMessage } from './protocol'
 import {
   ctx,
   isAsyncFn,
@@ -7,6 +7,7 @@ import {
   isStateSignal,
   type StoreDefinition,
 } from './defineStore'
+import { createOpsQueue, type OpsQueue } from './opsQueue'
 
 const SIGNALS = Symbol.for('ssw.signals')
 
@@ -64,46 +65,7 @@ export function clientFromPort(port: MessagePort) {
     { resolve: (v: unknown) => void; reject: (e: unknown) => void }
   >()
   const mirrors = new Map<string, MirrorRuntime>()
-
-  let setQueue: Map<string, Map<string, SetOp>> = new Map()
-  let callQueue: CallOp[] = []
-  let flushScheduled = false
-
-  function schedule() {
-    if (flushScheduled) return
-    flushScheduled = true
-    queueMicrotask(flush)
-  }
-
-  function enqueueSet(op: SetOp) {
-    let m = setQueue.get(op.storeId)
-    if (!m) {
-      m = new Map()
-      setQueue.set(op.storeId, m)
-    }
-    m.set(op.key, op)
-    schedule()
-  }
-
-  function enqueueCall(op: CallOp) {
-    callQueue.push(op)
-    schedule()
-  }
-
-  function flush() {
-    flushScheduled = false
-    const sets: SetOp[] = []
-    for (const m of setQueue.values()) for (const op of m.values()) sets.push(op)
-    const calls = callQueue
-    setQueue = new Map()
-    callQueue = []
-    if (sets.length === 0 && calls.length === 0) return
-    port.postMessage({
-      type: 'ops',
-      clientId,
-      ops: [...sets, ...calls],
-    } satisfies ClientMessage)
-  }
+  const queue: OpsQueue = createOpsQueue((msg) => port.postMessage(msg), clientId)
 
   function applyKeyState(mirror: MirrorRuntime, key: string, state: KeyState) {
     const sig = mirror.signals.get(key)
@@ -201,7 +163,7 @@ export function clientFromPort(port: MessagePort) {
             const seq = ++nextSeq
             mirror.latestLocalSeq.set(key, seq)
             sig.value = v
-            enqueueSet({ kind: 'set', storeId: def.id, key, value: v, seq })
+            queue.enqueueSet({ kind: 'set', storeId: def.id, key, value: v, seq })
           },
         })
       } else if (isDerivedSignal(val)) {
@@ -242,7 +204,7 @@ export function clientFromPort(port: MessagePort) {
         if (sig.peek() !== before.get(k)) mirror.latestLocalSeq.set(k, seq)
       }
       const callId = nextCallId++
-      enqueueCall({ kind: 'call', storeId, action: actionName, args, callId, seq })
+      queue.enqueueCall({ kind: 'call', storeId, action: actionName, args, callId, seq })
     }
   }
 
@@ -252,7 +214,7 @@ export function clientFromPort(port: MessagePort) {
         const callId = nextCallId++
         const seq = ++nextSeq
         pending.set(callId, { resolve, reject })
-        enqueueCall({ kind: 'call', storeId, action: actionName, args, callId, seq })
+        queue.enqueueCall({ kind: 'call', storeId, action: actionName, args, callId, seq })
       })
   }
 
