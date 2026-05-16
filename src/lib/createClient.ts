@@ -1,4 +1,4 @@
-import type { ReadonlySignal, Signal } from '@preact/signals-core'
+import { batch, type ReadonlySignal, type Signal } from '@preact/signals-core'
 import type { CallOp, ClientMessage, KeyState, SetOp, WorkerMessage } from './protocol'
 import {
   ctx,
@@ -145,7 +145,9 @@ export function clientFromPort(port: MessagePort) {
     if (msg.type === 'snapshot' || msg.type === 'patch') {
       const m = mirrors.get(msg.storeId)
       if (!m) return
-      for (const [k, ks] of Object.entries(msg.state)) applyKeyState(m, k, ks)
+      batch(() => {
+        for (const [k, ks] of Object.entries(msg.state)) applyKeyState(m, k, ks)
+      })
       if (msg.type === 'snapshot') m.resolveReady()
     } else if (msg.type === 'result') {
       const p = pending.get(msg.callId)
