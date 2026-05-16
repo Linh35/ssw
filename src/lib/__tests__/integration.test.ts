@@ -252,6 +252,43 @@ describe('interop', () => {
     expect(log).toEqual([11, 14])
   })
 
+  it('sync action with multi-key writes lands atomically on subscribers', async () => {
+    const def = defineStore('multi', ({ signal }) => {
+      const a = signal(0)
+      const b = signal(0)
+      const both = () => {
+        a.value = 1
+        b.value = 2
+      }
+      return { a, b, both }
+    })
+    const onConnect = bindHost([def as never])
+    const ch1 = new MessageChannel()
+    onConnect(ch1.port2 as unknown as MessagePort)
+    const ch2 = new MessageChannel()
+    onConnect(ch2.port2 as unknown as MessagePort)
+    const writer = clientFromPort(ch1.port1 as unknown as MessagePort).useStore(def)
+    const reader = clientFromPort(ch2.port1 as unknown as MessagePort).useStore(def)
+    await Promise.all([writer.ready, reader.ready])
+
+    let fires = 0
+    const dispose = effect(() => {
+      // read both so the effect tracks both signals
+      void reader.a
+      void reader.b
+      fires += 1
+    })
+    expect(fires).toBe(1)
+
+    writer.both()
+    await settle()
+
+    expect(reader.a).toBe(1)
+    expect(reader.b).toBe(2)
+    expect(fires).toBe(2)
+    dispose()
+  })
+
   it('a single client can host multiple stores', async () => {
     const counter = defineStore('m_counter', ({ signal }) => ({ c: signal(0) }))
     const flags = defineStore('m_flags', ({ signal }) => ({ on: signal(false) }))
@@ -266,11 +303,7 @@ describe('interop', () => {
 
     cs.c = 9
     fs.on = true
-    const settle3 = () =>
-      new Promise<void>((r) => setTimeout(r, 0)).then(() =>
-        new Promise<void>((r) => setTimeout(r, 0)),
-      )
-    await settle3()
+    await settle()
     expect(cs.c).toBe(9)
     expect(fs.on).toBe(true)
   })
