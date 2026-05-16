@@ -71,12 +71,12 @@ export function clientFromPort(port: MessagePort) {
     const sig = mirror.signals.get(key)
     if (!sig) return
     const localMax = mirror.latestLocalSeq.get(key) ?? 0
+    const ackedMax = mirror.ackedSeq.get(key) ?? 0
     const stateSeq = state.originSeq ?? 0
     if (state.originClientId === clientId) {
       if (stateSeq < localMax) return
-      const prevAck = mirror.ackedSeq.get(key) ?? 0
-      if (stateSeq > prevAck) mirror.ackedSeq.set(key, stateSeq)
-    } else if ((mirror.ackedSeq.get(key) ?? 0) < localMax) {
+      if (stateSeq > ackedMax) mirror.ackedSeq.set(key, stateSeq)
+    } else if (ackedMax < localMax) {
       return
     }
     if (sig.peek() !== state.value) sig.value = state.value
@@ -87,8 +87,9 @@ export function clientFromPort(port: MessagePort) {
     if (msg.type === 'snapshot' || msg.type === 'patch') {
       const m = mirrors.get(msg.storeId)
       if (!m) return
+      const state = msg.state
       batch(() => {
-        for (const [k, ks] of Object.entries(msg.state)) applyKeyState(m, k, ks)
+        for (const k in state) applyKeyState(m, k, state[k]!)
       })
       if (msg.type === 'snapshot') m.resolveReady()
     } else if (msg.type === 'result') {
@@ -100,7 +101,9 @@ export function clientFromPort(port: MessagePort) {
     } else if (msg.type === 'ack') {
       const m = mirrors.get(msg.storeId)
       if (!m) return
-      for (const [k, seq] of Object.entries(msg.seqs)) {
+      const seqs = msg.seqs
+      for (const k in seqs) {
+        const seq = seqs[k]!
         const prev = m.ackedSeq.get(k) ?? 0
         if (seq > prev) m.ackedSeq.set(k, seq)
       }

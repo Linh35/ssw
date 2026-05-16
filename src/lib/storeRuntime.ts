@@ -58,6 +58,7 @@ export function registerEffect(storeId: string, store: StoreRuntime) {
       any = true
     }
     if (!any) return
+    if (store.subscribers.size === 0) return
     const patch: WorkerMessage = { type: 'patch', storeId, state: changed }
     for (const port of store.subscribers) port.postMessage(patch)
   })
