@@ -24,8 +24,8 @@ Open the printed URL in two tabs. Click `+1` in one; the other moves too.
 ## Quick start
 
 ```ts
-// src/stores/counter.ts
-import { defineStore } from './lib'
+// examples/counter.ts
+import { defineStore } from '../src'
 
 export const counterStore = defineStore('counter', ({ signal, computed }) => {
   const count = signal(0)
@@ -43,17 +43,17 @@ export const counterStore = defineStore('counter', ({ signal, computed }) => {
 ```
 
 ```ts
-// src/worker.ts  — bundled as a SharedWorker entry
-import { createHost } from './lib'
-import { counterStore } from './stores/counter'
+// examples/worker.ts  — bundled as a SharedWorker entry
+import { createHost } from '../src'
+import { counterStore } from './counter'
 
 createHost([counterStore])
 ```
 
 ```ts
-// src/main.ts
-import { createClient, effect } from './lib'
-import { counterStore } from './stores/counter'
+// examples/main.ts
+import { createClient, effect } from '../src'
+import { counterStore } from './counter'
 
 const { useStore } = createClient(new URL('./worker.ts', import.meta.url))
 const store = useStore(counterStore)
@@ -118,7 +118,7 @@ Port-level entry points used by the test suite. They take any `MessagePort` (e.g
 
 ```ts
 // inside a test
-import { bindHost, clientFromPort, defineStore } from '../src/lib'
+import { bindHost, clientFromPort, defineStore } from '../src'
 
 const def = defineStore('x', ({ signal }) => ({ n: signal(0) }))
 const onConnect = bindHost([def])

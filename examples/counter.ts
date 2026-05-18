@@ -1,4 +1,4 @@
-import { defineStore } from '../lib'
+import { defineStore } from '../src'
 
 export const counterStore = defineStore('counter', ({ signal, computed }) => {
   const count = signal(0)

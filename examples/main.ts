@@ -1,5 +1,5 @@
-import { createClient, effect } from './lib'
-import { counterStore } from './stores/counter'
+import { createClient, effect } from '../src'
+import { counterStore } from './counter'
 
 const workerUrl = new URL('./worker.ts', import.meta.url)
 const { useStore } = createClient(workerUrl)
