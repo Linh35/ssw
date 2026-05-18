@@ -369,6 +369,217 @@ describe('store shapes', () => {
   })
 })
 
+describe('value types: arrays', () => {
+  it('array of strings round-trips', async () => {
+    const def = defineStore('strs', ({ signal }) => ({
+      tags: signal<string[]>(['a', 'b']),
+    }))
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    writer.tags = ['x', 'y', 'z']
+    await settle()
+    expect(reader.tags).toEqual(['x', 'y', 'z'])
+  })
+
+  it('array of objects round-trips with structural equality', async () => {
+    interface Todo { id: number; title: string; done: boolean }
+    const def = defineStore('todos', ({ signal }) => ({
+      list: signal<Todo[]>([]),
+    }))
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    writer.list = [
+      { id: 1, title: 'milk', done: false },
+      { id: 2, title: 'eggs', done: true },
+    ]
+    await settle()
+    expect(reader.list).toEqual([
+      { id: 1, title: 'milk', done: false },
+      { id: 2, title: 'eggs', done: true },
+    ])
+    // mutating the cloned list shouldn't affect the writer
+    reader.list[0]!.title = 'almond milk'
+    expect(writer.list[0]!.title).toBe('milk')
+  })
+
+  it('heterogeneous (mixed-type) array round-trips', async () => {
+    const def = defineStore('mix', ({ signal }) => ({
+      xs: signal<Array<number | string | boolean | null>>([]),
+    }))
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    writer.xs = [1, 'two', true, null, 4.5]
+    await settle()
+    expect(reader.xs).toEqual([1, 'two', true, null, 4.5])
+  })
+
+  it('nested arrays (array of arrays) round-trip', async () => {
+    const def = defineStore('grid', ({ signal }) => ({
+      g: signal<number[][]>([[1]]),
+    }))
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    writer.g = [
+      [1, 2, 3],
+      [4, 5, 6],
+      [7, 8, 9],
+    ]
+    await settle()
+    expect(reader.g).toEqual([
+      [1, 2, 3],
+      [4, 5, 6],
+      [7, 8, 9],
+    ])
+  })
+
+  it('sparse (holey) array preserves length and holes', async () => {
+    const def = defineStore('sparse', ({ signal }) => ({
+      xs: signal<Array<number | undefined>>([]),
+    }))
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    const a: number[] = []
+    a[5] = 42
+    writer.xs = a
+    await settle()
+    expect(reader.xs.length).toBe(6)
+    expect(reader.xs[5]).toBe(42)
+    expect(reader.xs[0]).toBeUndefined()
+  })
+
+  it('long array (1000 numbers) round-trips intact', async () => {
+    const def = defineStore('long', ({ signal }) => ({
+      xs: signal<number[]>([]),
+    }))
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    const big = Array.from({ length: 1000 }, (_, i) => i)
+    writer.xs = big
+    await settle()
+    expect(reader.xs.length).toBe(1000)
+    expect(reader.xs[0]).toBe(0)
+    expect(reader.xs[999]).toBe(999)
+  })
+
+  it('array reassignment via filter/map (typical immutable update)', async () => {
+    const def = defineStore('todoOps', ({ signal }) => {
+      const list = signal<{ id: number; done: boolean }[]>([
+        { id: 1, done: false },
+        { id: 2, done: false },
+        { id: 3, done: false },
+      ])
+      const toggle = (id: number) => {
+        list.value = list.value.map((t) =>
+          t.id === id ? { ...t, done: !t.done } : t,
+        )
+      }
+      const clearDone = () => {
+        list.value = list.value.filter((t) => !t.done)
+      }
+      return { list, toggle, clearDone }
+    })
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    writer.toggle(2)
+    await settle()
+    expect(reader.list).toEqual([
+      { id: 1, done: false },
+      { id: 2, done: true },
+      { id: 3, done: false },
+    ])
+    writer.clearDone()
+    await settle()
+    expect(reader.list).toEqual([
+      { id: 1, done: false },
+      { id: 3, done: false },
+    ])
+  })
+
+  it('computed derived from an array (filter)', async () => {
+    const def = defineStore('arrComputed', ({ signal, computed }) => {
+      const items = signal<{ id: number; done: boolean }[]>([
+        { id: 1, done: false },
+        { id: 2, done: true },
+        { id: 3, done: false },
+      ])
+      const pending = computed(() => items.value.filter((i) => !i.done))
+      const count = computed(() => items.value.length)
+      return { items, pending, count }
+    })
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    expect(reader.count).toBe(3)
+    expect(reader.pending).toEqual([
+      { id: 1, done: false },
+      { id: 3, done: false },
+    ])
+    writer.items = [{ id: 4, done: false }]
+    await settle()
+    expect(reader.count).toBe(1)
+    expect(reader.pending).toEqual([{ id: 4, done: false }])
+  })
+
+  it('async action returning an array', async () => {
+    const def = defineStore('arrReturn', ({ signal }) => {
+      const items = signal<number[]>([])
+      const fetchPage = async (n: number) => {
+        const page = Array.from({ length: n }, (_, i) => i + 1)
+        items.value = page
+        return page
+      }
+      return { items, fetchPage }
+    })
+    const { writer } = pair(def)
+    await writer.ready
+    const result = await writer.fetchPage(4)
+    expect(result).toEqual([1, 2, 3, 4])
+    expect(writer.items).toEqual([1, 2, 3, 4])
+  })
+
+  it('appending via spread propagates each new state', async () => {
+    const def = defineStore('append', ({ signal }) => {
+      const xs = signal<number[]>([])
+      const add = (n: number) => {
+        xs.value = [...xs.value, n]
+      }
+      return { xs, add }
+    })
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    writer.add(1)
+    writer.add(2)
+    writer.add(3)
+    await settle()
+    expect(reader.xs).toEqual([1, 2, 3])
+  })
+
+  it('reassigning the same array reference still fires — clone breaks identity across the boundary', async () => {
+    // Setting writer.xs = same is a local no-op (preact compares with !==
+    // and the writer's reference is unchanged), so the writer's local effect
+    // would not refire. But the proxy setter still queues an op; postMessage
+    // structured-clones the array on its way to the worker, so the worker
+    // sees a fresh reference, the global broadcast effect emits a patch,
+    // and the reader receives a new (also-cloned) reference.
+    const def = defineStore('sameRef', ({ signal }) => ({
+      xs: signal<number[]>([1, 2, 3]),
+    }))
+    const { writer, reader } = pair(def)
+    await Promise.all([writer.ready, reader.ready])
+    let fires = 0
+    const dispose = effect(() => {
+      void reader.xs
+      fires += 1
+    })
+    expect(fires).toBe(1)
+    const same = writer.xs
+    writer.xs = same
+    await settle()
+    expect(fires).toBeGreaterThan(1)
+    expect(reader.xs).toEqual([1, 2, 3])
+    dispose()
+  })
+})
+
 describe('value types: exotic but cloneable', () => {
   it('propagates RegExp values', async () => {
     const def = defineStore('rx', ({ signal }) => ({
